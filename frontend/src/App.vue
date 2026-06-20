@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { useCanBusStore } from './store/canbus';
+import { computed } from 'vue';
+import { useCanBusStore, SCENE_TEMPLATES } from './store/canbus';
+import type { DrivingScene } from './types';
 import FrameTable from './components/FrameTable.vue';
 import SignalChart from './components/SignalChart.vue';
 
 const store = useCanBusStore();
+
+const currentTemplate = computed(() => store.getCurrentSceneTemplate());
 
 function handleLoadDbc() {
   store.loadMockDbc();
@@ -19,6 +23,12 @@ function handleExport() {
   a.download = `can_frames_${Date.now()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function handleSceneChange(event: Event) {
+  const target = event.target as HTMLSelectElement;
+  const scene = target.value as DrivingScene;
+  store.setScene(scene);
 }
 </script>
 
@@ -42,6 +52,18 @@ function handleExport() {
         >
           加载DBC
         </button>
+        <div class="flex items-center gap-2">
+          <label class="text-sm text-gray-400">驾驶场景:</label>
+          <select
+            :value="store.currentScene"
+            @change="handleSceneChange"
+            class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded transition-colors border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+          >
+            <option v-for="scene in SCENE_TEMPLATES" :key="scene.id" :value="scene.id">
+              {{ scene.name }}
+            </option>
+          </select>
+        </div>
         <button
           @click="store.isCapturing ? store.stopCapture() : store.startCapture()"
           class="px-3 py-1.5 text-sm rounded transition-colors font-medium"
@@ -88,6 +110,19 @@ function handleExport() {
           </span>
         </span>
         <span>DBC消息: {{ store.dbcMessages.size }}</span>
+        <span class="text-cyan-400" :title="currentTemplate.description">
+          场景: {{ currentTemplate.name }}
+        </span>
+        <span class="text-gray-600">|</span>
+        <span class="text-gray-400">
+          RPM: {{ currentTemplate.rpmRange[0] }}-{{ currentTemplate.rpmRange[1] }}
+        </span>
+        <span class="text-gray-400">
+          速度: {{ currentTemplate.speedRange[0] }}-{{ currentTemplate.speedRange[1] }}km/h
+        </span>
+        <span class="text-gray-400">
+          波动率: {{ (currentTemplate.volatility * 100).toFixed(0) }}%
+        </span>
       </div>
       <div class="flex items-center gap-4 text-gray-500">
         <span>帧数: {{ store.busStats.totalFrames }}</span>

@@ -28,6 +28,20 @@ export interface DbcMessage {
   signals: DbcSignal[];
 }
 
+export type DrivingScene = 'IDLE' | 'CITY' | 'HIGHWAY' | 'ACCELERATION' | 'DECELERATION' | 'OFF_ROAD';
+
+export interface DrivingSceneTemplate {
+  id: DrivingScene;
+  name: string;
+  description: string;
+  rpmRange: [number, number];
+  speedRange: [number, number];
+  tempRange: [number, number];
+  throttleRange: [number, number];
+  loadRange: [number, number];
+  volatility: number;
+}
+
 export interface BusStats {
   totalFrames: number;
   rxCount: number;

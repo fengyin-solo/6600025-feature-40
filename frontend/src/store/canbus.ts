@@ -1,9 +1,91 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import type { CanFrame, DbcMessage, BusStats } from '../types';
+import type { CanFrame, DbcMessage, BusStats, DrivingScene, DrivingSceneTemplate } from '../types';
 import { parseDbc, decodeCanFrame, DEFAULT_DBC_CONTENT } from '../utils/dbc-parser';
 
 let frameIdCounter = 0;
+
+export const SCENE_TEMPLATES: DrivingSceneTemplate[] = [
+  {
+    id: 'IDLE',
+    name: '怠速工况',
+    description: '车辆静止，发动机怠速运转',
+    rpmRange: [650, 900],
+    speedRange: [0, 0],
+    tempRange: [85, 95],
+    throttleRange: [0, 8],
+    loadRange: [15, 30],
+    volatility: 0.05
+  },
+  {
+    id: 'CITY',
+    name: '城市道路',
+    description: '频繁启停，中低速行驶',
+    rpmRange: [800, 2500],
+    speedRange: [0, 60],
+    tempRange: [85, 100],
+    throttleRange: [5, 40],
+    loadRange: [25, 60],
+    volatility: 0.3
+  },
+  {
+    id: 'HIGHWAY',
+    name: '高速巡航',
+    description: '稳定高速行驶，发动机平稳运转',
+    rpmRange: [2000, 3500],
+    speedRange: [80, 120],
+    tempRange: [90, 105],
+    throttleRange: [20, 35],
+    loadRange: [40, 65],
+    volatility: 0.1
+  },
+  {
+    id: 'ACCELERATION',
+    name: '急加速',
+    description: '全油门加速，转速快速攀升',
+    rpmRange: [2500, 6000],
+    speedRange: [30, 120],
+    tempRange: [90, 110],
+    throttleRange: [60, 100],
+    loadRange: [70, 100],
+    volatility: 0.4
+  },
+  {
+    id: 'DECELERATION',
+    name: '减速制动',
+    description: '带档滑行或制动，转速下降',
+    rpmRange: [1000, 3000],
+    speedRange: [10, 80],
+    tempRange: [85, 95],
+    throttleRange: [0, 15],
+    loadRange: [10, 30],
+    volatility: 0.25
+  },
+  {
+    id: 'OFF_ROAD',
+    name: '越野工况',
+    description: '低转速大扭矩，波动剧烈',
+    rpmRange: [1200, 4000],
+    speedRange: [5, 40],
+    tempRange: [90, 115],
+    throttleRange: [30, 80],
+    loadRange: [50, 95],
+    volatility: 0.5
+  }
+];
+
+function getSceneTemplate(sceneId: DrivingScene): DrivingSceneTemplate {
+  return SCENE_TEMPLATES.find(s => s.id === sceneId) || SCENE_TEMPLATES[0];
+}
+
+function generateValueWithVolatility(range: [number, number], volatility: number): number {
+  const baseValue = range[0] + Math.random() * (range[1] - range[0]);
+  const rangeSpan = range[1] - range[0];
+  const noise = (Math.random() - 0.5) * 2 * volatility * rangeSpan;
+  let result = baseValue + noise;
+  result = Math.max(range[0], Math.min(range[1], result));
+  return result;
+}
 
 export const useCanBusStore = defineStore('canbus', () => {
   const frames = ref<CanFrame[]>([]);
@@ -13,6 +95,7 @@ export const useCanBusStore = defineStore('canbus', () => {
   const filterText = ref('');
   const isCapturing = ref(false);
   const pollInterval = ref<number | null>(null);
+  const currentScene = ref<DrivingScene>('IDLE');
 
   const busStats = ref<BusStats>({
     totalFrames: 0,
@@ -106,27 +189,28 @@ export const useCanBusStore = defineStore('canbus', () => {
     dbcMessages.value = parseDbc(text);
   }
 
-  function generateMockFrame(): CanFrame {
-    const messageIds = Array.from(dbcMessages.value.keys());
-    const arbId = messageIds.length > 0
+  function generateMockFrame(scene?: DrivingScene): CanFrame {
+    const effectiveScene = scene || currentScene.value;
+    const template = getSceneTemplate(effectiveScene);
+
+    const messageIds = Array.from(dbcMessages.value.keys()) as number[];
+    const arbId: number = messageIds.length > 0
       ? messageIds[Math.floor(Math.random() * messageIds.length)]
       : 0x7DF;
 
     const msgDef = dbcMessages.value.get(arbId);
 
-    // Generate realistic OBD-II values
-    const rpm = Math.floor(800 + Math.random() * 5200);
-    const speed = Math.floor(Math.random() * 120);
-    const temp = Math.floor(70 + Math.random() * 35);
-    const throttle = Math.floor(Math.random() * 100);
-    const load = Math.floor(Math.random() * 100);
+    const rpm = generateValueWithVolatility(template.rpmRange, template.volatility);
+    const speed = generateValueWithVolatility(template.speedRange, template.volatility);
+    const temp = generateValueWithVolatility(template.tempRange, template.volatility * 0.5);
+    const throttle = generateValueWithVolatility(template.throttleRange, template.volatility);
+    const load = generateValueWithVolatility(template.loadRange, template.volatility);
 
-    // Encode values into bytes (simplified encoding for display)
     const rpmRaw = Math.round(rpm / 0.25);
     const rpmLow = rpmRaw & 0xFF;
     const rpmHigh = (rpmRaw >> 8) & 0xFF;
-    const speedByte = speed & 0xFF;
-    const tempByte = (temp + 40) & 0xFF;
+    const speedByte = Math.round(speed) & 0xFF;
+    const tempByte = (Math.round(temp) + 40) & 0xFF;
     const throttleByte = Math.round(throttle / 0.392) & 0xFF;
     const loadByte = Math.round(load / 0.392) & 0xFF;
 
@@ -145,15 +229,23 @@ export const useCanBusStore = defineStore('canbus', () => {
 
     if (msgDef) {
       frame.decoded = {
-        EngineRPM: rpm,
-        VehicleSpeed: speed,
-        CoolantTemp: temp,
-        ThrottlePosition: throttle,
-        EngineLoad: load
+        EngineRPM: Math.round(rpm * 100) / 100,
+        VehicleSpeed: Math.round(speed * 100) / 100,
+        CoolantTemp: Math.round(temp * 100) / 100,
+        ThrottlePosition: Math.round(throttle * 100) / 100,
+        EngineLoad: Math.round(load * 100) / 100
       };
     }
 
     return frame;
+  }
+
+  function setScene(scene: DrivingScene) {
+    currentScene.value = scene;
+  }
+
+  function getCurrentSceneTemplate(): DrivingSceneTemplate {
+    return getSceneTemplate(currentScene.value);
   }
 
   function startCapture() {
@@ -204,14 +296,18 @@ export const useCanBusStore = defineStore('canbus', () => {
     filterText,
     busStats,
     isCapturing,
+    currentScene,
     filteredFrames,
     busLoadPercent,
     addFrame,
     clearFrames,
     loadMockDbc,
     parseAndLoadDbc,
+    generateMockFrame,
     startCapture,
     stopCapture,
+    setScene,
+    getCurrentSceneTemplate,
     decodeFrame,
     exportFrames
   };
